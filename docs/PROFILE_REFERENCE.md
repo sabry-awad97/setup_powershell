@@ -50,12 +50,12 @@ Set-PSReadLineOption -Colors @{
 
 # --- Aliases ---
 Set-Alias ll Get-ChildItem
-Set-Alias la "Get-ChildItem -Force"
+function la { Get-ChildItem -Force }
 
 # --- Git Shortcuts (functions instead of aliases) ---
 function gs { git status }
-function gc { git commit @args }     # usage: gc -m "msg"
-function gp { git push @args }
+function gcom { git commit @args }   # usage: gcom -m "msg"
+function gpush { git push @args }
 function gl { git log --oneline --graph --decorate --all }
 function gco { git checkout @args }
 function gb { git branch @args }
@@ -266,13 +266,13 @@ Set-PSReadLineOption -Colors @{
 
 ```powershell
 Set-Alias ll Get-ChildItem
-Set-Alias la "Get-ChildItem -Force"
+function la { Get-ChildItem -Force }
 ```
 
 **What they do:**
 
 - `ll` - List files and directories
-- `la` - List all files including hidden
+- `la` - List all files including hidden (implemented as a function)
 
 **Usage:**
 
@@ -315,17 +315,17 @@ gs  # Shows git status
 git status
 ```
 
-#### gc - Git Commit
+#### gcom - Git Commit
 
 ```powershell
-function gc { git commit @args }
+function gcom { git commit @args }
 ```
 
 **Usage:**
 
 ```powershell
-gc -m "Add new feature"
-gc -m "Fix bug" --amend
+gcom -m "Add new feature"
+gcom -m "Fix bug" --amend
 ```
 
 **What `@args` does:**
@@ -338,19 +338,23 @@ git commit -m "Add new feature"
 git commit -m "Fix bug" --amend
 ```
 
-#### gp - Git Push
+**Note:** Uses `gcom` instead of `gc` because PowerShell has a built-in `gc` alias for `Get-Content`.
+
+#### gpush - Git Push
 
 ```powershell
-function gp { git push @args }
+function gpush { git push @args }
 ```
 
 **Usage:**
 
 ```powershell
-gp                  # Push to default remote/branch
-gp origin main      # Push to specific remote/branch
-gp --force          # Force push
+gpush                  # Push to default remote/branch
+gpush origin main      # Push to specific remote/branch
+gpush --force          # Force push
 ```
+
+**Note:** Uses `gpush` instead of `gp` because PowerShell has a built-in `gp` alias for `Get-ItemProperty`.
 
 #### gl - Git Log (Pretty)
 

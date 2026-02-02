@@ -41,12 +41,12 @@ Set-PSReadLineOption -Colors @{
 
 # --- Aliases ---
 Set-Alias ll Get-ChildItem
-Set-Alias la "Get-ChildItem -Force"
+function la { Get-ChildItem -Force }
 
 # --- Git Shortcuts (functions instead of aliases) ---
 function gs { git status }
-function gc { git commit @args }     # usage: gc -m "msg"
-function gp { git push @args }
+function gcom { git commit @args }   # usage: gcom -m "msg"
+function gpush { git push @args }
 function gl { git log --oneline --graph --decorate --all }
 function gco { git checkout @args }
 function gb { git branch @args }
@@ -305,4 +305,3 @@ async fn install_oh_my_posh() -> Result<()> {
 
     Ok(())
 }
-

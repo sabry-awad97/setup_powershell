@@ -523,8 +523,8 @@ function la { Get-ChildItem -Force | Format-Table -AutoSize }
 # Git shortcuts
 function gs { git status -s }
 function ga { git add @args }
-function gc { git commit @args }
-function gp { git push @args }
+function gcom { git commit @args }
+function gpush { git push @args }
 function gl { git log --oneline --graph --decorate --all -20 }
 ```
 
@@ -555,8 +555,9 @@ function gd { git diff }
 function gdc { git diff --cached }
 function gco { git checkout @args }
 function gcb($branch) { git checkout -b $branch }
-function gp { git push }
-function gpl { git pull }
+function gcom { git commit @args }
+function gpush { git push }
+function gpull { git pull }
 function gf { git fetch }
 function gm { git merge @args }
 function gr { git rebase @args }

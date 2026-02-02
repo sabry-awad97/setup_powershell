@@ -169,18 +169,20 @@ Your branch is up to date with 'origin/main'.
 nothing to commit, working tree clean
 ```
 
-#### `gc` - Git Commit
+#### `gcom` - Git Commit
 
 ```powershell
-gc -m "Add new feature"
+gcom -m "Add new feature"
 ```
 
 Equivalent to: `git commit -m "Add new feature"`
 
-#### `gp` - Git Push
+**Note:** Uses `gcom` instead of `gc` to avoid conflict with PowerShell's built-in `gc` alias (Get-Content).
+
+#### `gpush` - Git Push
 
 ```powershell
-gp
+gpush
 ```
 
 Equivalent to: `git push`
@@ -188,8 +190,10 @@ Equivalent to: `git push`
 You can also specify remote and branch:
 
 ```powershell
-gp origin main
+gpush origin main
 ```
+
+**Note:** Uses `gpush` instead of `gp` to avoid conflict with PowerShell's built-in `gp` alias (Get-ItemProperty).
 
 #### `gl` - Git Log (Pretty)
 

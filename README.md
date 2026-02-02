@@ -87,12 +87,14 @@ pwsh
 The tool configures these convenient Git shortcuts:
 
 - `gs` → `git status`
-- `gc -m "message"` → `git commit -m "message"`
-- `gp` → `git push`
+- `gcom -m "message"` → `git commit -m "message"`
+- `gpush` → `git push`
 - `gl` → `git log --oneline --graph --decorate --all`
 - `gco branch` → `git checkout branch`
 - `gb` → `git branch`
 - `gd` → `git diff`
+
+**Note:** The aliases `gcom` and `gpush` are used instead of `gc` and `gp` to avoid conflicts with PowerShell's built-in aliases (`gc` = Get-Content, `gp` = Get-ItemProperty).
 
 ## Custom Aliases
 
