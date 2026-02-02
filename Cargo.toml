@@ -1,0 +1,13 @@
+[package]
+name = "setup_powershell"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.49.0", features = ["full"] }
+reqwest = { version = "0.13.1", features = ["stream"] }
+anyhow = "1.0.100"
+thiserror = "2.0.18"
+futures-util = "0.3.31"
+dirs = "6.0.0"
+colored = "3.1.1"
