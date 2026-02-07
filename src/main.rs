@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
+use dialoguer::Confirm;
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -59,10 +60,28 @@ $env:POSH_GIT_ENABLED = $true
 #[tokio::main]
 async fn main() -> Result<()> {
     if !is_pwsh_available().await {
-        println!(
-            "{}",
-            "❌ pwsh (PowerShell 7) not found. Installing...".red()
-        );
+        println!("{}", "❌ pwsh (PowerShell 7) not found.".red());
+
+        let should_install = Confirm::new()
+            .with_prompt("Would you like to download and install PowerShell 7?")
+            .default(true)
+            .interact()?;
+
+        if !should_install {
+            println!(
+                "\n{} {}",
+                "ℹ".blue(),
+                "Skipping PowerShell 7 installation.".bright_white()
+            );
+            println!(
+                "{} {}\n",
+                "💡".yellow(),
+                "You can install it manually from: https://github.com/PowerShell/PowerShell/releases".bright_black()
+            );
+            return Ok(());
+        }
+
+        println!("{}", "⬇ Installing PowerShell 7...".cyan());
         download_and_install_powershell().await?;
 
         if !is_pwsh_available().await {
