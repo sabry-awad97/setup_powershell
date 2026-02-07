@@ -59,7 +59,7 @@ $env:POSH_GIT_ENABLED = $true
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if !is_pwsh_available().await {
+    let use_pwsh = if !is_pwsh_available().await {
         println!("{}", "❌ pwsh (PowerShell 7) not found.".red());
 
         let should_install = Confirm::new()
@@ -74,47 +74,66 @@ async fn main() -> Result<()> {
                 "Skipping PowerShell 7 installation.".bright_white()
             );
             println!(
-                "{} {}\n",
-                "💡".yellow(),
-                "You can install it manually from: https://github.com/PowerShell/PowerShell/releases".bright_black()
-            );
-            return Ok(());
-        }
-
-        println!("{}", "⬇ Installing PowerShell 7...".cyan());
-        download_and_install_powershell().await?;
-
-        if !is_pwsh_available().await {
-            println!("\n{}", "━".repeat(60).bright_black());
-            println!(
                 "{} {}",
-                "✅".green(),
-                "PowerShell 7 installation completed!".green().bold()
-            );
-            println!("{}", "━".repeat(60).bright_black());
-            println!(
-                "\n{} {}",
-                "ℹ".blue(),
-                "PowerShell 7 has been installed but is not yet available in the current session."
-                    .bright_white()
-            );
-            println!("\n{}", "To complete the setup:".yellow().bold());
-            println!("  {} Open a new terminal window", "1.".cyan());
-            println!(
-                "  {} Run this program again: {}",
-                "2.".cyan(),
-                "cargo run --release".bright_black()
-            );
-            println!(
-                "\n{} {}\n",
                 "💡".yellow(),
-                "Alternatively, restart your PC for system-wide PATH updates.".bright_black()
+                "You can install it manually from: https://github.com/PowerShell/PowerShell/releases"
+                    .bright_black()
             );
-            return Ok(());
-        }
-    }
 
-    let profile_path = get_powershell_profile_path().await?;
+            if is_powershell_available().await {
+                println!(
+                    "\n{} {}\n",
+                    "🔄".cyan(),
+                    "Continuing with Windows PowerShell (powershell.exe)...".cyan()
+                );
+                false // Use powershell.exe instead
+            } else {
+                println!(
+                    "\n{} {}\n",
+                    "❌".red(),
+                    "No PowerShell version found. Please install PowerShell.".red()
+                );
+                return Ok(());
+            }
+        } else {
+            println!("{}", "⬇ Installing PowerShell 7...".cyan());
+            download_and_install_powershell().await?;
+
+            if !is_pwsh_available().await {
+                println!("\n{}", "━".repeat(60).bright_black());
+                println!(
+                    "{} {}",
+                    "✅".green(),
+                    "PowerShell 7 installation completed!".green().bold()
+                );
+                println!("{}", "━".repeat(60).bright_black());
+                println!(
+                    "\n{} {}",
+                    "ℹ".blue(),
+                    "PowerShell 7 has been installed but is not yet available in the current session."
+                        .bright_white()
+                );
+                println!("\n{}", "To complete the setup:".yellow().bold());
+                println!("  {} Open a new terminal window", "1.".cyan());
+                println!(
+                    "  {} Run this program again: {}",
+                    "2.".cyan(),
+                    "cargo run --release".bright_black()
+                );
+                println!(
+                    "\n{} {}\n",
+                    "💡".yellow(),
+                    "Alternatively, restart your PC for system-wide PATH updates.".bright_black()
+                );
+                return Ok(());
+            }
+            true
+        }
+    } else {
+        true // pwsh is available
+    };
+
+    let profile_path = get_powershell_profile_path(use_pwsh).await?;
     let profile_dir = profile_path
         .parent()
         .context("Failed to get profile directory")?;
@@ -130,8 +149,8 @@ async fn main() -> Result<()> {
         "Installing PowerShell modules...".cyan()
     );
     let (r1, r2, r3) = tokio::join!(
-        install_module("PSReadLine"),
-        install_module("posh-git"),
+        install_module("PSReadLine", use_pwsh),
+        install_module("posh-git", use_pwsh),
         install_oh_my_posh()
     );
 
@@ -158,10 +177,15 @@ async fn main() -> Result<()> {
         "📝".blue(),
         format!("Profile written to: {}", profile_path.display()).bright_white()
     );
+    let shell_name = if use_pwsh {
+        "PowerShell 7 (pwsh)"
+    } else {
+        "PowerShell"
+    };
     println!(
         "\n{} {}\n",
         "🔄".cyan(),
-        "Restart PowerShell 7 (pwsh) to see the changes.".cyan()
+        format!("Restart {} to see the changes.", shell_name).cyan()
     );
 
     Ok(())
@@ -177,10 +201,21 @@ async fn is_pwsh_available() -> bool {
         .is_ok()
 }
 
-async fn run_pwsh_command(cmd: &str) -> Result<String> {
+async fn is_powershell_available() -> bool {
+    Command::new("powershell")
+        .arg("-Version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .is_ok()
+}
+
+async fn run_pwsh_command(cmd: &str, use_pwsh: bool) -> Result<String> {
     println!("{} {}", "➡".blue(), cmd.bright_black());
 
-    let output = Command::new("pwsh")
+    let shell = if use_pwsh { "pwsh" } else { "powershell" };
+    let output = Command::new(shell)
         .args(["-Command", cmd])
         .output()
         .await
@@ -194,8 +229,9 @@ async fn run_pwsh_command(cmd: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-async fn get_powershell_profile_path() -> Result<PathBuf> {
-    let output = Command::new("pwsh")
+async fn get_powershell_profile_path(use_pwsh: bool) -> Result<PathBuf> {
+    let shell = if use_pwsh { "pwsh" } else { "powershell" };
+    let output = Command::new(shell)
         .args(["-NoProfile", "-Command", "$PROFILE"])
         .output()
         .await
@@ -299,9 +335,9 @@ async fn download_file(url: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn install_module(module_name: &str) -> Result<()> {
+async fn install_module(module_name: &str, use_pwsh: bool) -> Result<()> {
     let cmd = format!("Install-Module {} -Force -Scope CurrentUser", module_name);
-    run_pwsh_command(&cmd).await?;
+    run_pwsh_command(&cmd, use_pwsh).await?;
     Ok(())
 }
 
