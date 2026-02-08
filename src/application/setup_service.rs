@@ -9,6 +9,7 @@ use crate::domain::{Installer, ProfileConfig, ProfileWriter, ShellRunner, Termin
 #[derive(TypedBuilder)]
 pub struct SetupService {
     shell: Arc<dyn ShellRunner>,
+    #[allow(dead_code)]
     pwsh_installer: Arc<dyn Installer>,
     font_installer: Arc<dyn Installer>,
     terminal_config: Arc<dyn TerminalConfigurator>,
@@ -20,22 +21,13 @@ pub struct SetupService {
 impl SetupService {
     /// Run the complete setup process
     pub async fn run_setup(&self, config: &ProfileConfig) -> Result<()> {
-        self.ensure_powershell().await?;
+        // Note: PowerShell installation is handled in main.rs before service creation
         self.install_core_components().await?;
         self.install_modules(&config.plugins).await?;
         self.write_profile(config).await?;
 
         self.print_success(config).await?;
 
-        Ok(())
-    }
-
-    /// Ensure PowerShell 7 is installed
-    async fn ensure_powershell(&self) -> Result<()> {
-        if !self.pwsh_installer.is_installed().await {
-            println!("\n{} {}", "📦".cyan(), "Installing PowerShell 7...".cyan());
-            self.pwsh_installer.install().await?;
-        }
         Ok(())
     }
 
