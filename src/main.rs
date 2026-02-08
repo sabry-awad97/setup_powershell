@@ -18,8 +18,15 @@ const PROFILE_CONTENT: &str = r#"
 # --- Import Modules ---
 Import-Module posh-git
 
-# Oh-My-Posh prompt theme (change "paradox.omp.json" to your favorite)
-oh-my-posh init pwsh --config "$env:POSH_THEMES_PATH\paradox.omp.json" | Invoke-Expression
+# Oh-My-Posh prompt theme
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+    $configPath = "$env:POSH_THEMES_PATH\paradox.omp.json"
+    if (Test-Path $configPath) {
+        oh-my-posh init pwsh --config $configPath | Invoke-Expression
+    } else {
+        oh-my-posh init pwsh | Invoke-Expression
+    }
+}
 
 # --- PSReadLine Settings ---
 Set-PSReadLineOption -PredictionSource History
@@ -148,13 +155,14 @@ async fn main() -> Result<()> {
         "📦".cyan(),
         "Installing PowerShell modules...".cyan()
     );
-    let (r1, r2, r3) = tokio::join!(
+    let (r1, r2, r3, r4) = tokio::join!(
         install_module("PSReadLine", use_pwsh),
         install_module("posh-git", use_pwsh),
-        install_oh_my_posh()
+        install_oh_my_posh(),
+        install_nerd_font()
     );
 
-    for result in [r1, r2, r3] {
+    for result in [r1, r2, r3, r4] {
         if let Err(e) = result {
             eprintln!("{} {}", "⚠".yellow(), format!("Warning: {}", e).yellow());
         }
@@ -187,6 +195,27 @@ async fn main() -> Result<()> {
         "🔄".cyan(),
         format!("Restart {} to see the changes.", shell_name).cyan()
     );
+
+    // Try to update Windows Terminal font
+    if let Err(e) = update_windows_terminal_font().await {
+        println!(
+            "\n{} {}",
+            "💡".yellow(),
+            format!("Could not auto-configure Windows Terminal font: {}", e).yellow()
+        );
+        println!(
+            "{} {}",
+            "ℹ".blue(),
+            "Manually set font to 'MesloLGM Nerd Font' in Windows Terminal settings."
+                .bright_white()
+        );
+    } else {
+        println!(
+            "\n{} {}",
+            "✅".green(),
+            "Windows Terminal font updated to MesloLGM Nerd Font!".green()
+        );
+    }
 
     Ok(())
 }
@@ -336,12 +365,44 @@ async fn download_file(url: &str, path: &Path) -> Result<()> {
 }
 
 async fn install_module(module_name: &str, use_pwsh: bool) -> Result<()> {
+    // Check if module is already installed
+    let check_cmd = format!("Get-Module -ListAvailable -Name {}", module_name);
+    if let Ok(output) = run_pwsh_command(&check_cmd, use_pwsh).await {
+        if !output.is_empty() {
+            println!(
+                "{} {} {}",
+                "✓".green(),
+                module_name.bright_white(),
+                "already installed".bright_black()
+            );
+            return Ok(());
+        }
+    }
+
     let cmd = format!("Install-Module {} -Force -Scope CurrentUser", module_name);
     run_pwsh_command(&cmd, use_pwsh).await?;
     Ok(())
 }
 
 async fn install_oh_my_posh() -> Result<()> {
+    // Check if oh-my-posh is already installed
+    if Command::new("oh-my-posh")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .is_ok()
+    {
+        println!(
+            "{} {} {}",
+            "✓".green(),
+            "oh-my-posh".bright_white(),
+            "already installed".bright_black()
+        );
+        return Ok(());
+    }
+
     println!(
         "{} {}",
         "➡".blue(),
@@ -356,6 +417,129 @@ async fn install_oh_my_posh() -> Result<()> {
 
     if !status.success() {
         anyhow::bail!("winget install failed");
+    }
+
+    Ok(())
+}
+
+async fn install_nerd_font() -> Result<()> {
+    // Check if Meslo font is already installed
+    let fonts_dir = std::env::var("LOCALAPPDATA")
+        .map(|p| PathBuf::from(p).join("Microsoft\\Windows\\Fonts"))
+        .ok();
+
+    if let Some(dir) = fonts_dir {
+        if dir.exists() {
+            let entries = fs::read_dir(&dir).await;
+            if let Ok(mut entries) = entries {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    if let Ok(name) = entry.file_name().into_string() {
+                        if name.contains("MesloLGM") || name.contains("Meslo") {
+                            println!(
+                                "{} {} {}",
+                                "✓".green(),
+                                "Meslo Nerd Font".bright_white(),
+                                "already installed".bright_black()
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "{} {}",
+        "➡".blue(),
+        "oh-my-posh font install meslo".bright_black()
+    );
+
+    let status = Command::new("oh-my-posh")
+        .args(["font", "install", "meslo"])
+        .status()
+        .await
+        .context("Failed to execute oh-my-posh font install")?;
+
+    if !status.success() {
+        anyhow::bail!("oh-my-posh font install failed");
+    }
+
+    Ok(())
+}
+
+async fn update_windows_terminal_font() -> Result<()> {
+    let local_appdata =
+        std::env::var("LOCALAPPDATA").context("LOCALAPPDATA environment variable not found")?;
+
+    let settings_paths = [
+        format!(
+            "{}\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json",
+            local_appdata
+        ),
+        format!(
+            "{}\\Packages\\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\\LocalState\\settings.json",
+            local_appdata
+        ),
+        format!("{}\\Microsoft\\Windows Terminal\\settings.json", local_appdata),
+    ];
+
+    let mut found = false;
+    for settings_path in &settings_paths {
+        let path = PathBuf::from(settings_path);
+        if !path.exists() {
+            continue;
+        }
+
+        found = true;
+        let content = fs::read_to_string(&path)
+            .await
+            .context("Failed to read settings.json")?;
+
+        let mut json: serde_json::Value =
+            serde_json::from_str(&content).context("Failed to parse settings.json")?;
+
+        // Update font for all profiles
+        if let Some(profiles) = json.get_mut("profiles") {
+            if let Some(defaults) = profiles.get_mut("defaults") {
+                if let Some(obj) = defaults.as_object_mut() {
+                    obj.insert(
+                        "font".to_string(),
+                        serde_json::json!({
+                            "face": "MesloLGM Nerd Font"
+                        }),
+                    );
+                }
+            } else {
+                // Create defaults if it doesn't exist
+                if let Some(obj) = profiles.as_object_mut() {
+                    obj.insert(
+                        "defaults".to_string(),
+                        serde_json::json!({
+                            "font": {
+                                "face": "MesloLGM Nerd Font"
+                            }
+                        }),
+                    );
+                }
+            }
+        }
+
+        let updated_content =
+            serde_json::to_string_pretty(&json).context("Failed to serialize JSON")?;
+        fs::write(&path, updated_content)
+            .await
+            .context("Failed to write settings.json")?;
+
+        println!(
+            "{} {}",
+            "✅".green(),
+            format!("Updated: {}", path.display()).green()
+        );
+    }
+
+    if !found {
+        anyhow::bail!("Windows Terminal settings.json not found");
     }
 
     Ok(())
