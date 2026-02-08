@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
-use dialoguer::Confirm;
+use dialoguer::{Confirm, MultiSelect, Select};
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -10,25 +10,122 @@ use tokio::process::Command;
 
 const GITHUB_RELEASES: &str = "https://github.com/PowerShell/PowerShell/releases/latest";
 
-const PROFILE_CONTENT: &str = r#"
-# ===========================
+// Available Oh-My-Posh themes
+const THEMES: &[(&str, &str)] = &[
+    ("paradox", "Clean and informative with git status"),
+    ("agnoster", "Classic powerline theme"),
+    ("atomic", "Minimal and fast"),
+    ("blue-owl", "Blue themed with icons"),
+    ("bubbles", "Colorful bubble segments"),
+    ("capr4n", "Compact with git info"),
+    ("clean-detailed", "Detailed system info"),
+    ("craver", "Developer focused"),
+    ("dracula", "Dark Dracula theme"),
+    ("gruvbox", "Retro groove colors"),
+    ("jandedobbeleer", "Oh-My-Posh author's theme"),
+    ("material", "Material design inspired"),
+    ("montys", "Monty Python themed"),
+    ("night-owl", "Night Owl color scheme"),
+    ("powerlevel10k_rainbow", "Colorful powerline"),
+    ("pure", "Minimal pure theme"),
+    ("robbyrussell", "Oh-My-Zsh classic"),
+    ("sonicboom_dark", "Fast and dark"),
+    ("star", "Star symbols theme"),
+    ("tokyo", "Tokyo Night theme"),
+];
+
+// Available plugins
+const PLUGINS: &[(&str, &str)] = &[
+    ("PSReadLine", "Enhanced command line editing (core)"),
+    ("posh-git", "Git status in prompt (core)"),
+    ("Terminal-Icons", "File and folder icons in listings"),
+    ("PSFzf", "Fuzzy finder integration (auto-installs fzf)"),
+    ("z", "Quick directory jumping"),
+];
+
+// Profile presets
+#[derive(Debug, Clone)]
+struct ProfilePreset {
+    name: &'static str,
+    description: &'static str,
+    theme: &'static str,
+    plugins: &'static [&'static str],
+    custom_aliases: bool,
+}
+
+const PROFILE_PRESETS: &[ProfilePreset] = &[
+    ProfilePreset {
+        name: "Minimal",
+        description: "Basic setup with essential features only",
+        theme: "pure",
+        plugins: &["PSReadLine", "posh-git"],
+        custom_aliases: false,
+    },
+    ProfilePreset {
+        name: "Developer",
+        description: "Full-featured setup for developers",
+        theme: "paradox",
+        plugins: &["PSReadLine", "posh-git", "Terminal-Icons", "PSFzf", "z"],
+        custom_aliases: true,
+    },
+    ProfilePreset {
+        name: "Work",
+        description: "Professional setup with productivity tools",
+        theme: "jandedobbeleer",
+        plugins: &["PSReadLine", "posh-git", "Terminal-Icons", "PSFzf"],
+        custom_aliases: true,
+    },
+    ProfilePreset {
+        name: "Custom",
+        description: "Choose your own theme and plugins",
+        theme: "",
+        plugins: &[],
+        custom_aliases: true,
+    },
+];
+
+fn generate_profile_content(theme: &str, plugins: &[String], include_aliases: bool) -> String {
+    let mut content = String::from(
+        r#"# ===========================
 # Modern PowerShell 7 Profile
 # ===========================
 
-# --- Import Modules ---
-Import-Module posh-git
+"#,
+    );
 
-# Oh-My-Posh prompt theme
-if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
-    $configPath = "$env:POSH_THEMES_PATH\paradox.omp.json"
-    if (Test-Path $configPath) {
-        oh-my-posh init pwsh --config $configPath | Invoke-Expression
-    } else {
-        oh-my-posh init pwsh | Invoke-Expression
+    // Import modules
+    content.push_str("# --- Import Modules ---\n");
+    for plugin in plugins {
+        if plugin == "PSReadLine" || plugin == "posh-git" {
+            content.push_str(&format!("Import-Module {}\n", plugin));
+        } else {
+            content.push_str(&format!(
+                "if (Get-Module -ListAvailable -Name {}) {{ Import-Module {} }}\n",
+                plugin, plugin
+            ));
+        }
     }
-}
+    content.push('\n');
 
-# --- PSReadLine Settings ---
+    // Oh-My-Posh theme
+    content.push_str(&format!(
+        r#"# Oh-My-Posh prompt theme
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {{
+    $configPath = "$env:POSH_THEMES_PATH\{}.omp.json"
+    if (Test-Path $configPath) {{
+        oh-my-posh init pwsh --config $configPath | Invoke-Expression
+    }} else {{
+        oh-my-posh init pwsh | Invoke-Expression
+    }}
+}}
+
+"#,
+        theme
+    ));
+
+    // PSReadLine settings
+    content.push_str(
+        r#"# --- PSReadLine Settings ---
 Set-PSReadLineOption -PredictionSource History
 Set-PSReadLineOption -PredictionViewStyle InlineView
 Set-PSReadLineOption -Colors @{ "InlinePrediction" = 'Cyan' }
@@ -47,97 +144,76 @@ Set-PSReadLineOption -Colors @{
     "Variable"  = 'White'
 }
 
-# --- Aliases ---
+"#,
+    );
+
+    // Aliases
+    if include_aliases {
+        content.push_str(
+            r#"# --- Aliases ---
 Set-Alias ll Get-ChildItem
 function la { Get-ChildItem -Force }
 
-# --- Git Shortcuts (functions instead of aliases) ---
+# --- Git Shortcuts ---
 function gs { git status }
-function gcom { git commit @args }   # usage: gcom -m "msg"
+function gcom { git commit @args }
 function gpush { git push @args }
 function gl { git log --oneline --graph --decorate --all }
 function gco { git checkout @args }
 function gb { git branch @args }
 function gd { git diff @args }
 
-# --- Environment ---
+"#,
+        );
+    }
+
+    // Environment
+    content.push_str(
+        r#"# --- Environment ---
 $env:POSH_GIT_ENABLED = $true
-"#;
+"#,
+    );
+
+    content
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let use_pwsh = if !is_pwsh_available().await {
-        println!("{}", "❌ pwsh (PowerShell 7) not found.".red());
+    println!("\n{}", "🚀 PowerShell Setup Tool".cyan().bold());
+    println!("{}\n", "━".repeat(60).bright_black());
 
-        let should_install = Confirm::new()
-            .with_prompt("Would you like to download and install PowerShell 7?")
-            .default(true)
-            .interact()?;
+    let use_pwsh = check_and_install_pwsh().await?;
 
-        if !should_install {
-            println!(
-                "\n{} {}",
-                "ℹ".blue(),
-                "Skipping PowerShell 7 installation.".bright_white()
-            );
-            println!(
-                "{} {}",
-                "💡".yellow(),
-                "You can install it manually from: https://github.com/PowerShell/PowerShell/releases"
-                    .bright_black()
-            );
+    // Profile selection
+    println!(
+        "\n{} {}",
+        "📋".cyan(),
+        "Choose a profile preset:".cyan().bold()
+    );
+    let preset_names: Vec<String> = PROFILE_PRESETS
+        .iter()
+        .map(|p| format!("{} - {}", p.name, p.description))
+        .collect();
 
-            if is_powershell_available().await {
-                println!(
-                    "\n{} {}\n",
-                    "🔄".cyan(),
-                    "Continuing with Windows PowerShell (powershell.exe)...".cyan()
-                );
-                false // Use powershell.exe instead
-            } else {
-                println!(
-                    "\n{} {}\n",
-                    "❌".red(),
-                    "No PowerShell version found. Please install PowerShell.".red()
-                );
-                return Ok(());
-            }
-        } else {
-            println!("{}", "⬇ Installing PowerShell 7...".cyan());
-            download_and_install_powershell().await?;
+    let preset_idx = Select::new()
+        .with_prompt("Select profile")
+        .items(&preset_names)
+        .default(1)
+        .interact()?;
 
-            if !is_pwsh_available().await {
-                println!("\n{}", "━".repeat(60).bright_black());
-                println!(
-                    "{} {}",
-                    "✅".green(),
-                    "PowerShell 7 installation completed!".green().bold()
-                );
-                println!("{}", "━".repeat(60).bright_black());
-                println!(
-                    "\n{} {}",
-                    "ℹ".blue(),
-                    "PowerShell 7 has been installed but is not yet available in the current session."
-                        .bright_white()
-                );
-                println!("\n{}", "To complete the setup:".yellow().bold());
-                println!("  {} Open a new terminal window", "1.".cyan());
-                println!(
-                    "  {} Run this program again: {}",
-                    "2.".cyan(),
-                    "cargo run --release".bright_black()
-                );
-                println!(
-                    "\n{} {}\n",
-                    "💡".yellow(),
-                    "Alternatively, restart your PC for system-wide PATH updates.".bright_black()
-                );
-                return Ok(());
-            }
-            true
-        }
+    let selected_preset = &PROFILE_PRESETS[preset_idx];
+
+    let (theme, plugins) = if selected_preset.name == "Custom" {
+        select_custom_configuration().await?
     } else {
-        true // pwsh is available
+        (
+            selected_preset.theme.to_string(),
+            selected_preset
+                .plugins
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
     };
 
     let profile_path = get_powershell_profile_path(use_pwsh).await?;
@@ -149,55 +225,25 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to create profile directory")?;
 
-    // Install required modules in parallel
+    // Install core components
     println!(
         "\n{} {}",
         "📦".cyan(),
-        "Installing PowerShell modules...".cyan()
+        "Installing core components...".cyan()
     );
-    let (r1, r2, r3, r4) = tokio::join!(
-        install_module("PSReadLine", use_pwsh),
-        install_module("posh-git", use_pwsh),
+    let (r1, r2, r3) = tokio::join!(
         install_oh_my_posh(),
-        install_nerd_font()
+        install_nerd_font(),
+        update_windows_terminal_font()
     );
 
-    for result in [r1, r2, r3, r4] {
+    for result in [r1, r2] {
         if let Err(e) = result {
             eprintln!("{} {}", "⚠".yellow(), format!("Warning: {}", e).yellow());
         }
     }
 
-    // Write profile
-    fs::write(&profile_path, PROFILE_CONTENT.trim())
-        .await
-        .context("Failed to write profile")?;
-
-    println!("\n{}", "━".repeat(60).bright_black());
-    println!(
-        "{} {}",
-        "✅".green(),
-        "Setup completed successfully!".green().bold()
-    );
-    println!("{}", "━".repeat(60).bright_black());
-    println!(
-        "\n{} {}",
-        "📝".blue(),
-        format!("Profile written to: {}", profile_path.display()).bright_white()
-    );
-    let shell_name = if use_pwsh {
-        "PowerShell 7 (pwsh)"
-    } else {
-        "PowerShell"
-    };
-    println!(
-        "\n{} {}\n",
-        "🔄".cyan(),
-        format!("Restart {} to see the changes.", shell_name).cyan()
-    );
-
-    // Try to update Windows Terminal font
-    if let Err(e) = update_windows_terminal_font().await {
+    if let Err(e) = r3 {
         println!(
             "\n{} {}",
             "💡".yellow(),
@@ -213,11 +259,189 @@ async fn main() -> Result<()> {
         println!(
             "\n{} {}",
             "✅".green(),
-            "Windows Terminal font updated to MesloLGM Nerd Font!".green()
+            "Windows Terminal font updated!".green()
         );
     }
 
+    // Install selected plugins
+    println!(
+        "\n{} {}",
+        "🔌".cyan(),
+        "Installing selected plugins...".cyan()
+    );
+
+    for plugin in &plugins {
+        // If PSFzf is selected, install fzf first
+        if plugin == "PSFzf" {
+            if let Err(e) = install_fzf().await {
+                eprintln!(
+                    "{} {}",
+                    "⚠".yellow(),
+                    format!("Warning: Failed to install fzf: {}. PSFzf may not work.", e).yellow()
+                );
+            }
+        }
+
+        if let Err(e) = install_module(plugin, use_pwsh).await {
+            eprintln!(
+                "{} {}",
+                "⚠".yellow(),
+                format!("Warning: Failed to install {}: {}", plugin, e).yellow()
+            );
+        }
+    }
+
+    // Generate and write profile
+    let profile_content =
+        generate_profile_content(&theme, &plugins, selected_preset.custom_aliases);
+
+    fs::write(&profile_path, profile_content.trim())
+        .await
+        .context("Failed to write profile")?;
+
+    print_summary(selected_preset, &theme, &plugins, &profile_path, use_pwsh);
+
     Ok(())
+}
+
+async fn check_and_install_pwsh() -> Result<bool> {
+    if is_pwsh_available().await {
+        return Ok(true);
+    }
+
+    println!("{}", "❌ pwsh (PowerShell 7) not found.".red());
+
+    let should_install = Confirm::new()
+        .with_prompt("Would you like to download and install PowerShell 7?")
+        .default(true)
+        .interact()?;
+
+    if !should_install {
+        println!(
+            "\n{} {}",
+            "ℹ".blue(),
+            "Skipping PowerShell 7 installation.".bright_white()
+        );
+
+        if is_powershell_available().await {
+            println!(
+                "\n{} {}\n",
+                "🔄".cyan(),
+                "Continuing with Windows PowerShell...".cyan()
+            );
+            return Ok(false);
+        } else {
+            anyhow::bail!("No PowerShell version found");
+        }
+    }
+
+    println!("{}", "⬇ Installing PowerShell 7...".cyan());
+    download_and_install_powershell().await?;
+
+    if !is_pwsh_available().await {
+        println!("\n{}", "━".repeat(60).bright_black());
+        println!(
+            "{} {}",
+            "✅".green(),
+            "PowerShell 7 installed!".green().bold()
+        );
+        println!("{}", "━".repeat(60).bright_black());
+        println!(
+            "\n{} {}",
+            "ℹ".blue(),
+            "Please restart your terminal and run this program again.".bright_white()
+        );
+        std::process::exit(0);
+    }
+
+    Ok(true)
+}
+
+async fn select_custom_configuration() -> Result<(String, Vec<String>)> {
+    // Theme selection
+    println!("\n{} {}", "🎨".cyan(), "Choose a theme:".cyan().bold());
+    let theme_items: Vec<String> = THEMES
+        .iter()
+        .map(|(name, desc)| format!("{} - {}", name, desc))
+        .collect();
+
+    let theme_idx = Select::new()
+        .with_prompt("Select theme")
+        .items(&theme_items)
+        .default(0)
+        .interact()?;
+
+    let selected_theme = THEMES[theme_idx].0.to_string();
+
+    // Plugin selection
+    println!(
+        "\n{} {}",
+        "🔌".cyan(),
+        "Choose plugins to install:".cyan().bold()
+    );
+    let plugin_items: Vec<String> = PLUGINS
+        .iter()
+        .map(|(name, desc)| format!("{} - {}", name, desc))
+        .collect();
+
+    let plugin_indices = MultiSelect::new()
+        .with_prompt("Select plugins (Space to toggle, Enter to confirm)")
+        .items(&plugin_items)
+        .defaults(&[true, true, false, false, false])
+        .interact()?;
+
+    let selected_plugins: Vec<String> = plugin_indices
+        .iter()
+        .map(|&i| PLUGINS[i].0.to_string())
+        .collect();
+
+    Ok((selected_theme, selected_plugins))
+}
+
+fn print_summary(
+    preset: &ProfilePreset,
+    theme: &str,
+    plugins: &[String],
+    profile_path: &Path,
+    use_pwsh: bool,
+) {
+    println!("\n{}", "━".repeat(60).bright_black());
+    println!(
+        "{} {}",
+        "✅".green(),
+        "Setup completed successfully!".green().bold()
+    );
+    println!("{}", "━".repeat(60).bright_black());
+    println!(
+        "\n{} {}",
+        "📝".blue(),
+        format!("Profile: {}", preset.name).bright_white()
+    );
+    println!(
+        "{} {}",
+        "🎨".blue(),
+        format!("Theme: {}", theme).bright_white()
+    );
+    println!(
+        "{} {}",
+        "🔌".blue(),
+        format!("Plugins: {}", plugins.join(", ")).bright_white()
+    );
+    println!(
+        "\n{} {}",
+        "📄".blue(),
+        format!("Profile written to: {}", profile_path.display()).bright_white()
+    );
+    let shell_name = if use_pwsh {
+        "PowerShell 7 (pwsh)"
+    } else {
+        "PowerShell"
+    };
+    println!(
+        "\n{} {}\n",
+        "🔄".cyan(),
+        format!("Restart {} to see the changes.", shell_name).cyan()
+    );
 }
 
 async fn is_pwsh_available() -> bool {
@@ -332,11 +556,7 @@ async fn download_and_install_powershell() -> Result<()> {
         .await?;
 
     if status.success() {
-        println!(
-            "{} {}",
-            "✅".green(),
-            "PowerShell 7 installed. Please restart the script if pwsh not found.".green()
-        );
+        println!("{} {}", "✅".green(), "PowerShell 7 installed!".green());
     } else {
         anyhow::bail!("Installation failed with status: {}", status);
     }
@@ -541,6 +761,52 @@ async fn update_windows_terminal_font() -> Result<()> {
     if !found {
         anyhow::bail!("Windows Terminal settings.json not found");
     }
+
+    Ok(())
+}
+
+async fn install_fzf() -> Result<()> {
+    // Check if fzf is already installed
+    if Command::new("fzf")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .is_ok()
+    {
+        println!(
+            "{} {} {}",
+            "✓".green(),
+            "fzf".bright_white(),
+            "already installed".bright_black()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} {}",
+        "➡".blue(),
+        "winget install fzf -s winget".bright_black()
+    );
+
+    let status = Command::new("winget")
+        .args([
+            "install",
+            "fzf",
+            "-s",
+            "winget",
+            "--accept-source-agreements",
+        ])
+        .status()
+        .await
+        .context("Failed to execute winget")?;
+
+    if !status.success() {
+        anyhow::bail!("winget install fzf failed");
+    }
+
+    println!("{} {}", "✅".green(), "fzf installed successfully!".green());
 
     Ok(())
 }
